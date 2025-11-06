@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Spin Wheel</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;500;700&display=swap" rel="stylesheet">
+  <style>
+    :root{
+      --bg1:#0b0416; --bg2:#15002b; --panel:#1f1b2e;
+      --accent:#8b5cf6; --accent2:#a78bfa;
+      --slice1:#7c3aed; --slice2:#9d4edd;
+    }
+    *{box-sizing:border-box}
+    body{
+      margin:0; font-family:'Poppins',sans-serif; color:#ecf0ff; min-height:100vh;
+      background: radial-gradient(60% 60% at 50% 20%, #2a1657 0%, transparent 60%),
+                 radial-gradient(40% 40% at 80% 0%, #3c1c74 0%, transparent 55%),
+                 linear-gradient(160deg, var(--bg1), var(--bg2));
+      display:flex; justify-content:center; align-items:flex-start; padding:24px 12px 40px; text-align:center;
+    }
+    #container{ width:100%; max-width:720px; }
+    h1{ margin:0 0 12px; text-shadow:0 0 14px var(--accent2); }
+    .small{ font-size:14px; color:#cbd5e1; }
+    .card{ background:rgba(14,10,25,0.7); padding:16px; border-radius:18px;
+           box-shadow:0 0 24px rgba(167,139,250,.35), inset 0 0 8px rgba(255,255,255,.04); margin:auto; }
+    .row{ display:flex; gap:8px; justify-content:center; flex-wrap:wrap; }
+    input{ padding:10px 12px; border-radius:10px; border:1px solid #3b3b4a; background:#0e0c18; color:#fff; min-width:180px; }
+    .btn{ padding:10px 18px; border-radius:12px; cursor:pointer; border:none;
+          background:linear-gradient(135deg,var(--accent),#6d28d9); color:#fff; font-weight:700; letter-spacing:.5px;
+          box-shadow:0 8px 24px rgba(139,92,246,.35); }
+    .btn:disabled{ opacity:.6; cursor:not-allowed }
+    .wheel-wrap{ margin:auto; max-width:560px; }
+    canvas{ width:100%; height:auto; display:block; border-radius:14px; background:#111827;
+            filter: drop-shadow(0 0 14px rgba(139,92,246,.45)); }
+    #info{ margin-top:12px; color:#bfffd1; }
+    .toast{ position:fixed; left:50%; bottom:24px; transform:translateX(-50%);
+            background:#1f1b2e; color:#fff; padding:10px 14px; border-radius:12px;
+            box-shadow:0 10px 30px rgba(0,0,0,.4), 0 0 20px rgba(167,139,250,.35);
+            opacity:0; pointer-events:none; transition:.25s ease; z-index:9999; max-width:92%; }
+    .toast.show{ opacity:1; pointer-events:auto; }
+    @media (max-width:520px){ input{min-width:130px; flex:1} .btn{width:100%} }
+  </style>
+</head>
+<body>
+  <div id="container">
+    <h1>Spin Wheel</h1>
+
+    <div id="loginBox" class="card">
+      <div class="row">
+        <input id="userid" placeholder="ID" />
+        <input id="pw" placeholder="Password" type="password" />
+        <button class="btn" id="btnLogin">Login</button>
+      </div>
+      <div class="small" style="margin-top:6px;">Gunakan ID & password dari sheet Users</div>
+    </div>
+
+    <div id="wheelBox" class="card" style="display:none;">
+      <div id="welcome" class="small" style="margin-bottom:8px;"></div>
+      <div class="wheel-wrap"><canvas id="wheel"></canvas></div>
+      <div style="margin-top:12px;"><button class="btn" id="btnSpin">SPIN</button></div>
+      <div id="info"></div>
+    </div>
+  </div>
+  <div id="toast" class="toast"></div>
+
+<script>
+/* ====== CONFIG ====== */
+const BACKEND_URL = 'https://script.google.com/macros/s/AKfycbxY-YbPkCIWVeTmnm3tDUBds4_iuitPoCXXaQM9v7c4nm0831_hCiXmpntIBxWn_s2iYA/exec';
+
+/* ====== API helper (CORS friendly) ====== */
+async function api(action, payload={}){
+  const res = await fetch(BACKEND_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'text/plain;charset=utf-8' }, // simple request → aman di Pages
+    body: JSON.stringify({ action, ...payload })
+  });
+  const text = await res.text();
+  try { return JSON.parse(text); } catch { return {success:false, message:'Bad JSON'}; }
+}
+
+/* ====== UI & wheel code ====== */
+let user=null, prizes=[], isSpinning=false, currentRotation=0;
+const canvas=document.getElementById('wheel'), ctx=canvas.getContext('2d');
+const toastEl=document.getElementById('toast');
+function showToast(m,ms=2400){ toastEl.textContent=m; toastEl.classList.add('show'); setTimeout(()=>toastEl.classList.remove('show'),ms); }
+function setBtnLoading(btn, on, txt=''){ if(on){btn.dataset.old=btn.textContent;btn.textContent=txt||'Loading...';btn.disabled=true}else{btn.textContent=btn.dataset.old||btn.textContent;btn.disabled=false} }
+
+document.getElementById('btnLogin').onclick = doLogin;
+document.getElementById('pw').addEventListener('keydown', e=>{ if(e.key==='Enter') doLogin(); });
+document.getElementById('userid').addEventListener('keydown', e=>{ if(e.key==='Enter') doLogin(); });
+
+async function doLogin(){
+  const id=document.getElementById('userid').value.trim();
+  const pw=document.getElementById('pw').value.trim();
+  if(!id||!pw){ showToast('ID dan Password wajib diisi'); return; }
+  document.getElementById('info').textContent='Memeriksa...';
+  setBtnLoading(document.getElementById('btnLogin'), true, 'Memeriksa...');
+  const res=await api('login',{id,password:pw});
+  setBtnLoading(document.getElementById('btnLogin'), false);
+  if(res.success){
+    user=res;
+    document.getElementById('loginBox').style.display='none';
+    document.getElementById('wheelBox').style.display='block';
+    document.getElementById('welcome').innerHTML='Halo, '+(res.name||res.id)+' — ID: '+res.id;
+    await loadPrizesAndDraw();
+    updateSpinsInfo();
+  }else{
+    document.getElementById('info').textContent=res.message||'Login gagal';
+    showToast(res.message||'Login gagal');
+  }
+}
+
+async function loadPrizesAndDraw(){
+  const p=await api('getprizes');
+  if(p.success){ prizes=p.prizes||[]; resizeCanvas(); }
+  else showToast('Gagal ambil hadiah');
+}
+
+async function updateSpinsInfo(){
+  const r=await api('getspins',{id:user.id});
+  const cnt=(r&&r.success)?r.spins:0;
+  document.getElementById('info').textContent='Spins tersisa: '+cnt;
+  document.getElementById('btnSpin').disabled=(Number(cnt)<=0);
+}
+
+/* Responsive canvas */
+function resizeCanvas(){
+  const wrap=document.querySelector('.wheel-wrap');
+  const dpr=window.devicePixelRatio||1;
+  let target=Math.min(560, wrap.clientWidth); target=Math.max(260,target);
+  canvas.width=Math.round(target*dpr); canvas.height=canvas.width;
+  canvas.style.width=Math.round(target)+'px'; canvas.style.height=canvas.style.width;
+  ctx.setTransform(dpr,0,0,dpr,0,0);
+  drawWheel();
+}
+const ro=new ResizeObserver(()=>resizeCanvas()); ro.observe(document.querySelector('.wheel-wrap'));
+window.addEventListener('orientationchange',()=>setTimeout(resizeCanvas,200));
+
+function drawWheel(){
+  const w=canvas.width/(window.devicePixelRatio||1);
+  const cx=w/2, cy=w/2;
+  const n=prizes.length||8;
+  const slice=(2*Math.PI)/n;
+  const outerR=(w/2)-12, textRadius=outerR*0.62;
+  ctx.clearRect(0,0,w,w);
+  // glow ring
+  ctx.save(); ctx.translate(cx,cy); ctx.lineWidth=10; ctx.strokeStyle='#a78bfa'; ctx.shadowColor='#a78bfa'; ctx.shadowBlur=24;
+  ctx.beginPath(); ctx.arc(0,0, outerR+6, 0, 2*Math.PI); ctx.stroke(); ctx.restore();
+  // slices
+  const getVar=n=>getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+  const col1=getVar('--slice1'), col2=getVar('--slice2');
+  for(let i=0;i<n;i++){ const s=i*slice+currentRotation, e=s+slice;
+    ctx.save(); ctx.translate(cx,cy); ctx.beginPath(); ctx.moveTo(0,0); ctx.arc(0,0,outerR,s,e); ctx.closePath();
+    ctx.fillStyle=(i%2===0)?col1:col2; ctx.fill(); ctx.restore();
+  }
+  // labels
+  for(let i=0;i<n;i++){
+    const a=(i+0.5)*slice+currentRotation, tx=cx+Math.cos(a)*textRadius, ty=cy+Math.sin(a)*textRadius;
+    ctx.save(); ctx.fillStyle='#fff'; ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.font=`bold ${Math.max(14,Math.min(22,Math.round(w/25)))}px Poppins, Arial`;
+    ctx.shadowColor='rgba(0,0,0,.65)'; ctx.shadowBlur=6;
+    const label=String(prizes[i]??''); 
+    if(label.length>8 && label.includes(' ')){ const p=label.split(' '); ctx.fillText(p[0],tx,ty-10); ctx.fillText(p.slice(1).join(' '),tx,ty+12); }
+    else ctx.fillText(label,tx,ty);
+    ctx.restore();
+  }
+  // pointer
+  ctx.save(); ctx.fillStyle='#fff'; ctx.shadowColor='#a78bfa'; ctx.shadowBlur=16;
+  ctx.beginPath(); ctx.moveTo(cx-12,14); ctx.lineTo(cx+12,14); ctx.lineTo(cx,44); ctx.closePath(); ctx.fill(); ctx.restore();
+}
+
+document.getElementById('btnSpin').onclick = async function(){
+  if(isSpinning) return;
+  if(!user){ showToast('Login dulu ya'); return; }
+  isSpinning=true; setBtnLoading(document.getElementById('btnSpin'), true, 'Memutar...');
+  document.getElementById('info').textContent='Memproses spin...';
+  const res=await api('spin',{id:user.id});
+  setBtnLoading(document.getElementById('btnSpin'), false);
+  if(!res.success){ isSpinning=false; showToast(res.message||'Gagal spin'); document.getElementById('info').textContent=res.message||'Gagal spin'; return; }
+  const n=prizes.length, sliceDeg=360/n;
+  const targetIndex=res.index, randomRounds=4+Math.floor(Math.random()*3);
+  const targetAngle=randomRounds*360 + (360 - (targetIndex*sliceDeg + sliceDeg/2));
+  animateSpin(targetAngle, async ()=>{
+    showToast(`🎉 Hadiah: ${res.prize} • Sisa spin: ${res.remaining}`);
+    await updateSpinsInfo(); isSpinning=false;
+  });
+};
+
+function animateSpin(targetDeg, cb){
+  const duration=3500; let start=null; let initial=currentRotation*(180/Math.PI);
+  function step(ts){ if(!start) start=ts; let t=(ts-start)/duration; if(t>1)t=1;
+    const eased=1-Math.pow(1-t,3); const deg=initial+(targetDeg-initial)*eased;
+    currentRotation=deg*Math.PI/180; drawWheel();
+    if(t<1) requestAnimationFrame(step); else { currentRotation=currentRotation%(2*Math.PI); cb(); } }
+  requestAnimationFrame(step);
+}
+</script>
+</body>
+</html>
